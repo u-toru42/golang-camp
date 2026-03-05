@@ -2,7 +2,6 @@ package command
 
 type Command interface {
 	Execute() string
-
 }
 
 type Light struct{}
@@ -20,7 +19,7 @@ type LightOnCommand struct {
 }
 
 func NewLightOnCommand(light *Light) *LightOnCommand {
-	return &LightOnCommand {
+	return &LightOnCommand{
 		light: light,
 	}
 }

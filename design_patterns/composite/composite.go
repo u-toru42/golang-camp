@@ -21,13 +21,13 @@ func (f *File) Size() int {
 }
 
 type Directory struct {
-	name string
+	name     string
 	children []FileSystemNode
 }
 
 func NewDirectory(name string) *Directory {
 	return &Directory{
-		name: name,
+		name:     name,
 		children: []FileSystemNode{},
 	}
 }

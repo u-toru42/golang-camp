@@ -2,9 +2,7 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
 
 jobs:
   build:
@@ -26,7 +24,15 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: go check
+    - name: Check Format
+      run: |
+        if [ -n "$(gofmt -l .)" ]; then
+          echo "以下のファイルのフォーマットが正しくありません:"
+          gofmt -l .
+          exit 1
+        fi
+
+    - name: go check (vet)
       run: go vet ./...
 
     - name: Build

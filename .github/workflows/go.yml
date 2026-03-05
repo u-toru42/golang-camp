@@ -22,8 +22,6 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.23'
-        # ここも同様に修正します
-        cache-dependency-path: design_patterns/go.sum
 
     - name: Install dependencies
       run: go mod download

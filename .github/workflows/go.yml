@@ -13,13 +13,19 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    # 実行ディレクトリを go.mod がある場所に固定する設定
+    defaults:
+      run:
+        working-directory: golang-camp/design_patterns
+        
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.20'
+        go-version: '1.25'
+        cache-dependency-path: golang-camp/design_patterns/go.sum
 
     - name: Build
       run: go build -v ./...

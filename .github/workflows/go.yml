@@ -26,6 +26,9 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: go check
+      run: go vet ./...
+
     - name: Build
       run: go build -v ./...
 

@@ -1,11 +1,12 @@
-name: Go
+name: Go Quality Assurance
 
 on:
   push:
   pull_request:
 
 jobs:
-  build:
+  quality-gate:
+    name: Quality Gate
     runs-on: ubuntu-latest
     
     defaults:
@@ -13,30 +14,31 @@ jobs:
         working-directory: design_patterns
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
-        cache: false
+        cache: false # go.sumがない環境への配慮
 
-    - name: Install dependencies
-      run: go mod download
+    - name: Verify Dependencies
+      run: go mod verify
 
     - name: Check Format
       run: |
         if [ -n "$(gofmt -l .)" ]; then
-          echo "以下のファイルのフォーマットが正しくありません:"
+          echo "Error: Code is not formatted. Run 'go fmt ./...' locally."
           gofmt -l .
           exit 1
         fi
 
-    - name: go check (vet)
+    - name: Static Analysis
       run: go vet ./...
 
-    - name: Build
+    - name: Build (Fowler's CI)
       run: go build -v ./...
 
-    - name: Test
-      run: go test -v ./...
+    - name: Run Tests with Coverage
+      run: go test -v -race -covermode=atomic ./...

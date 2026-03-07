@@ -1,0 +1,82 @@
+{
+  "description": "github actions connect",
+  "edition": 2,
+  "graph": {
+    "edges": [
+      {
+        "source": {
+          "exec_alias": "exec",
+          "node_id": 0
+        },
+        "target": {
+          "exec_alias": "exec",
+          "node_id": 2
+        }
+      },
+      {
+        "source": {
+          "exec_alias": "exec",
+          "node_id": 2
+        },
+        "target": {
+          "exec_alias": "exec",
+          "node_id": 1
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "alias": "on_intercept_request",
+        "definition_id": "caido/on-intercept-request",
+        "display": {
+          "x": 0,
+          "y": 0
+        },
+        "id": 0,
+        "name": "On intercept request",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "passive_end",
+        "definition_id": "caido/passive-end",
+        "display": {
+          "x": 300,
+          "y": 0
+        },
+        "id": 1,
+        "name": "Passive End",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "javascript",
+        "definition_id": "caido/http-code-js",
+        "display": {
+          "x": 160,
+          "y": 70
+        },
+        "id": 2,
+        "inputs": [
+          {
+            "alias": "request",
+            "value": {
+              "data": "$on_intercept_request.request",
+              "kind": "ref"
+            }
+          },
+          {
+            "alias": "code",
+            "value": {
+              "data": "export function run(input) {\n    const fs = require('fs');\n    const findings = [];\n    \n    // CLIから渡されるファイルパスを取得 (input.path または input.file)\n    const filePath = input.path || input.file;\n    \n    if (!filePath) return { findings: [] };\n\n    try {\n        const content = fs.readFileSync(filePath, 'utf8');\n        \n        if (content.includes('eval(')) {\n            const lines = content.split('\\n');\n            const lineNum = lines.findIndex(line => line.includes('eval(')) + 1;\n            \n            findings.push({\n                severity: 'CRITICAL',\n                file: filePath,\n                line: lineNum,\n                message: 'Dangerous eval() detected.'\n            });\n        }\n    } catch (err) {\n        // バイナリファイルなどで読み込めない場合はスキップ\n    }\n\n    return { findings };\n}",
+              "kind": "string"
+            }
+          }
+        ],
+        "name": "Javascript",
+        "version": "0.1.1"
+      }
+    ]
+  },
+  "id": "cfe58198-5a5c-4d5d-9110-9198449d1e58",
+  "kind": "passive",
+  "name": "sast-scanner"
+}

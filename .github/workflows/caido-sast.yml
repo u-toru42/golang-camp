@@ -1,0 +1,103 @@
+name: Multi-OS Caido Security Scan
+
+on:
+  pull_request:
+    # branches指定を削除することで、全PRが対象になります
+    types: [opened, synchronize, reopened]
+
+jobs:
+  security-scan:
+    # UbuntuとMacの両方で実行する設定
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Binary URL based on OS
+        id: set_url
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            echo "URL=https://github.com/caido/caido/releases/latest/download/caido-cli-linux-x86_64.tar.gz" >> $GITHUB_OUTPUT
+          else
+            # macOS用（Apple Silicon/Intel共通の最新版URLを想定）
+            echo "URL=https://github.com/caido/caido/releases/latest/download/caido-cli-macos-x86_64.tar.gz" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Caido CLI
+        run: |
+          curl -L ${{ steps.set_url.outputs.URL }} | tar xz
+          chmod +x caido
+          sudo mv caido /usr/local/bin/
+          caido --version
+
+      - name: Run Caido Scan
+        env:
+          CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
+        run: |
+          # ワークフローを実行し、結果を保存
+          caido workflow run --workflow .caido/sast-scanner.json --input . --format json > results.json
+
+      - name: Comment on PR (Ubuntu only to avoid double comments)
+        if: matrix.os == 'ubuntu-latest' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+const path = require('path');
+
+let body = "### 🛡️ Caido Security Scan Result\n\n";
+
+try {
+  // 1. JSONファイルを読み込み
+  const rawData = fs.readFileSync('results.json', 'utf8');
+  const data = JSON.parse(rawData);
+
+  // 2. 脆弱性が存在するかチェック
+  // ※Caidoのワークフローの戻り値構造に合わせて .findings の部分は調整してください
+  const findings = data.findings || [];
+
+  if (findings.length === 0) {
+    body += "✅ **Great job!** 脆弱性は見つかりませんでした。";
+  } else {
+    body += `⚠️ **${findings.length} 件の問題が見つかりました。**\n\n`;
+    
+    // 3. テーブルのヘッダー作成
+    body += "| Severity | File | Line | Message |\n";
+    body += "| :--- | :--- | :--- | :--- |\n";
+
+    // 4. 各項目をループで回してテーブル行を作成
+    findings.forEach(f => {
+      const severity = f.severity === 'CRITICAL' ? '🔴 CRITICAL' : 
+                       f.severity === 'HIGH' ? '🟠 HIGH' : 
+                       f.severity === 'MEDIUM' ? '🟡 MEDIUM' : '🔵 LOW';
+      
+      // ファイルパスを短く整形（リポジトリのルートからの相対パスに）
+      const filePath = f.file ? f.file.replace(process.cwd() + '/', '') : 'N/A';
+      const line = f.line || '-';
+      const message = f.message || 'No description provided';
+
+      body += `| ${severity} | \`${filePath}\` | ${line} | ${message} |\n`;
+    });
+
+    body += "\n---\n💡 *修正後に再度Pushすると自動的に再スキャンされます。*";
+  }
+} catch (error) {
+  body += "❌ **Error:** スキャン結果の解析中にエラーが発生しました。";
+  console.error(error);
+}
+
+// 5. GitHub PRにコメントを投稿
+await github.rest.issues.createComment({
+  issue_number: context.issue.number,
+  owner: context.repo.owner,
+  repo: context.repo.repo,
+  body: body
+});

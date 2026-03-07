@@ -18,6 +18,10 @@ type Item struct {
 	inStock      bool
 }
 
+type SystemLogger struct {
+	LogData []string
+}
+
 func NewItem(name string) *Item {
 	return &Item{
 		name: name,
@@ -50,9 +54,15 @@ type Customer struct {
 }
 
 func (c *Customer) Update(itemName string) {
-	msg := fmt.Sprintf("お客様 %s: %s が入荷しましたよ!", c.id, itemName)
+	msg := fmt.Sprintf("お客様 %s: %s が入荷しましたよ!\n", c.id, itemName)
 	c.ReceivedMsgs = append(c.ReceivedMsgs, msg)
 	fmt.Println(msg)
+}
+
+func (l *SystemLogger) Update(itemName string) {
+	logMsg := fmt.Sprintf("[Log] システム記録: アイテム「%s」の入荷イベントを検知しました。\n", itemName)
+	l.LogData = append(l.LogData, logMsg)
+	fmt.Println(logMsg)
 }
 
 func main() {
@@ -61,8 +71,12 @@ func main() {
 	customer1 := &Customer{id: "Alice"}
 	customer2 := &Customer{id: "Bob"}
 
+	logger := &SystemLogger{}
+
 	nintendoSwitch.Register(customer1)
 	nintendoSwitch.Register(customer2)
+
+	nintendoSwitch.Register(logger)
 
 	nintendoSwitch.UpdateAvailability()
 }

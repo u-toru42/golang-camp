@@ -1,4 +1,4 @@
-name: Caido SAST Security Scan
+name: Custom Security Scan
 
 on:
   pull_request:
@@ -22,18 +22,12 @@ jobs:
         with:
           node-version: '24'
 
-      # Caidoサーバーのダウンロード＆起動は不要になりました！一気にスキャンを実行します。
-      - name: Run Caido Rule Engine
+      - name: Run Security Scanner
         run: |
           echo '{"findings": []}' > results.json
-          node .caido/run-scan.js
+          # 変更点: 実行パスを .vuln_check に合わせる
+          node .vuln_check/run-scan.js
         continue-on-error: true
-
-      - name: Debug results.json
-        if: always()
-        run: |
-          echo "=== results.json の中身を表示します ==="
-          [ -f results.json ] && cat results.json || echo "ファイルが存在しません"
 
       - name: Post Result Comment
         if: matrix.os == 'ubuntu-latest' && always()
@@ -41,13 +35,12 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let body = "### 🛡️ Caido Security Scan Result\n\n";
+            let body = "### 🛡️ Security Scan Result\n\n";
             try {
               if (fs.existsSync('results.json')) {
                 const content = fs.readFileSync('results.json', 'utf8').trim();
                 const data = JSON.parse(content);
                 
-                // 【修正】エラーを正しく検知して表示するように変更
                 if (data.error) {
                   body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**エラー内容:**\n```\n" + data.error + "\n```";
                 } else {
@@ -55,10 +48,10 @@ jobs:
                   if (findings.length === 0) {
                     body += "✅ 脆弱性は見つかりませんでした。";
                   } else {
-                    body += "| Severity | File | Line | Message |\n| :--- | :--- | :--- | :--- |\n";
+                    body += "| Severity | File | Line | Title | Description |\n| :--- | :--- | :--- | :--- | :--- |\n";
                     findings.forEach(f => {
                       const icon = f.severity === 'CRITICAL' ? '🔴' : '🟡';
-                      body += `| ${icon} ${f.severity} | \`${f.file}\` | ${f.line} | ${f.message} |\n`;
+                      body += `| ${icon} ${f.severity} | \`${f.file}\` | ${f.line} | **${f.title}** | ${f.description} |\n`;
                     });
                   }
                 }

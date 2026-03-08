@@ -56,34 +56,36 @@ jobs:
             unzip -o caido_archive.zip -d ./caido_install
           fi
           
+          # バイナリを特定（名前は変えずにパスだけ通す）
           BINARY_PATH=$(find ./caido_install -type f \( -name "caido" -o -name "caido-cli" \) | head -n 1)
-          
-          if [ -z "$BINARY_PATH" ]; then
-            echo "Error: Binary not found."
-            ls -R ./caido_install
-            exit 1
-          fi
-          
           chmod +x "$BINARY_PATH"
+          
+          # システムパスに 'caido-cli' としてコピー
+          sudo cp -f "$BINARY_PATH" /usr/local/bin/caido-cli
+          # 互換性のために 'caido' としてもコピー
           sudo cp -f "$BINARY_PATH" /usr/local/bin/caido
-          caido --version
+          
+          caido-cli --version
 
       - name: Run Caido Scan
         id: run_scan
         env:
           CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
         run: |
+          # results.json を空のJSONで初期化
           echo '{"findings": []}' > results.json
-          # 実行ログを results.json に統合して、何が起きたか把握できるようにします
-          caido run .caido/sast-scanner.json --input . --format json > results.json 2>&1 || true
+          
+          # 正しいコマンド：caido-cli workflow run
+          # エラーも results.json に出力してデバッグ可能にする
+          caido-cli workflow run .caido/sast-scanner.json --input . --format json > results.json 2>&1 || true
         continue-on-error: true
 
       - name: Debug results.json
         run: |
+          echo "=== 実行コマンドのヘルプを表示（デバッグ用） ==="
+          caido-cli workflow run --help || true
           echo "=== results.json の中身を表示します ==="
-          ls -lh results.json || echo "ファイルが存在しません"
           cat results.json || echo "ファイルを開けません"
-          echo "========================================"
 
       - name: Post Result Comment
         if: matrix.os == 'ubuntu-latest' && always()

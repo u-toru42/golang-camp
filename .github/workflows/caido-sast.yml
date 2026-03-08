@@ -22,7 +22,6 @@ jobs:
         with:
           node-version: '24'
 
-      # --- [重要] ここが抜けていました：ダウンロードURLの取得 ---
       - name: Set Binary URL and Format
         id: set_url
         run: |
@@ -70,13 +69,12 @@ jobs:
         env:
           CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
         run: |
-          # 1. results.json の初期化（Nodeスクリプトが失敗しても後のステップを壊さないため）
           echo '{"findings": []}' > results.json
-
-          # 2. Caidoをバックグラウンドで起動
+          
+          # Caidoサーバー起動
           caido-cli --listen 127.0.0.1:8082 --no-open --debug &
           
-          # 3. 起動を待機（Macでも動くように汎用的なループに変更）
+          # サーバー起動待ち
           echo "Waiting for Caido to start..."
           for i in {1..30}; do
             if curl -s http://127.0.0.1:8082 > /dev/null; then
@@ -86,7 +84,7 @@ jobs:
             sleep 2
           done
           
-          # 4. SDKのインストールとスキャンの実行
+          # SDKインストールとスクリプト実行
           npm install @caido/sdk-client
           node .caido/run-scan.js
         continue-on-error: true

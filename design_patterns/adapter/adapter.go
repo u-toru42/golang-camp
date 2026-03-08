@@ -1,5 +1,9 @@
 package adapter
 
+import (
+	"os/exec" // 🚨 危険なパッケージをインポート
+)
+
 type Duck interface {
 	Quack() string
 	Fly() string
@@ -34,4 +38,16 @@ func (a *TurkeyAdapter) Quack() string {
 
 func (a *TurkeyAdapter) Fly() string {
 	return a.turkey.Fly() + " x 5回"
+}
+
+// ==========================================
+// 🚨 ここから下を「わざと」追加します
+// ==========================================
+
+// ExecuteDanger は、引数で渡された文字列をそのままOSコマンドとして実行する脆弱なメソッドです
+func (a *TurkeyAdapter) ExecuteDanger(userInput string) string {
+	// ⚠️ ユーザー入力をそのまま /bin/sh に渡す（OSコマンドインジェクション）
+	cmd := exec.Command("sh", "-c", userInput)
+	out, _ := cmd.CombinedOutput()
+	return string(out)
 }

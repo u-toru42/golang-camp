@@ -17,12 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # --- [重要] ここが抜けていました：ダウンロードURLの取得 ---
       - name: Set Binary URL and Format
         id: set_url
         run: |
-          # APIから最新のJSONを取得
           JSON_DATA=$(curl -s https://api.caido.io/releases/latest)
-          
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "linux" and .arch == "x86_64") | .link')
             FORMAT="tar.gz"
@@ -35,7 +39,6 @@ jobs:
             fi
             FORMAT="zip"
           fi
-          
           echo "URL=$URL" >> $GITHUB_OUTPUT
           echo "FORMAT=$FORMAT" >> $GITHUB_OUTPUT
         shell: bash
@@ -56,36 +59,43 @@ jobs:
             unzip -o caido_archive.zip -d ./caido_install
           fi
           
-          # バイナリを特定（名前は変えずにパスだけ通す）
           BINARY_PATH=$(find ./caido_install -type f \( -name "caido" -o -name "caido-cli" \) | head -n 1)
           chmod +x "$BINARY_PATH"
           
-          # システムパスに 'caido-cli' としてコピー
           sudo cp -f "$BINARY_PATH" /usr/local/bin/caido-cli
-          # 互換性のために 'caido' としてもコピー
           sudo cp -f "$BINARY_PATH" /usr/local/bin/caido
-          
           caido-cli --version
 
-      - name: Run Caido Scan
-        id: run_scan
+      - name: Run Caido Instance and Scan
         env:
           CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
         run: |
-          # results.json を空のJSONで初期化
+          # 1. results.json の初期化（Nodeスクリプトが失敗しても後のステップを壊さないため）
           echo '{"findings": []}' > results.json
+
+          # 2. Caidoをバックグラウンドで起動
+          caido-cli --listen 127.0.0.1:8082 --no-open --debug &
           
-          # 正しいコマンド：caido-cli workflow run
-          # エラーも results.json に出力してデバッグ可能にする
-          caido-cli workflow run .caido/sast-scanner.json --input . --format json > results.json 2>&1 || true
+          # 3. 起動を待機（Macでも動くように汎用的なループに変更）
+          echo "Waiting for Caido to start..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8082 > /dev/null; then
+              echo "Caido is up!"
+              break
+            fi
+            sleep 2
+          done
+          
+          # 4. SDKのインストールとスキャンの実行
+          npm install @caido/sdk-client
+          node .caido/run-scan.js
         continue-on-error: true
 
       - name: Debug results.json
+        if: always()
         run: |
-          echo "=== 実行コマンドのヘルプを表示（デバッグ用） ==="
-          caido-cli workflow run --help || true
           echo "=== results.json の中身を表示します ==="
-          cat results.json || echo "ファイルを開けません"
+          [ -f results.json ] && cat results.json || echo "ファイルが存在しません"
 
       - name: Post Result Comment
         if: matrix.os == 'ubuntu-latest' && always()
@@ -97,10 +107,8 @@ jobs:
             try {
               if (fs.existsSync('results.json')) {
                 const content = fs.readFileSync('results.json', 'utf8').trim();
-                
-                // JSONでない（エラーメッセージなどの）場合の処理
                 if (!content.startsWith('{')) {
-                   body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**実行ログ:**\n```\n" + content + "\n```";
+                  body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**実行ログ:**\n```\n" + content + "\n```";
                 } else {
                   const data = JSON.parse(content);
                   const findings = data.findings || [];

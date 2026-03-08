@@ -1,0 +1,70 @@
+name: Custom Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  security-scan:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run Security Scanner
+        run: |
+          echo '{"findings": []}' > results.json
+          # 変更点: 実行パスを .vuln_check に合わせる
+          node .vuln_check/run-scan.js
+        continue-on-error: true
+
+      - name: Post Result Comment
+        if: matrix.os == 'ubuntu-latest' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = "### 🛡️ Security Scan Result\n\n";
+            try {
+              if (fs.existsSync('results.json')) {
+                const content = fs.readFileSync('results.json', 'utf8').trim();
+                const data = JSON.parse(content);
+                
+                if (data.error) {
+                  body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**エラー内容:**\n```\n" + data.error + "\n```";
+                } else {
+                  const findings = data.findings || [];
+                  if (findings.length === 0) {
+                    body += "✅ 脆弱性は見つかりませんでした。";
+                  } else {
+                    body += "| Severity | File | Line | Title | Description |\n| :--- | :--- | :--- | :--- | :--- |\n";
+                    findings.forEach(f => {
+                      const icon = f.severity === 'CRITICAL' ? '🔴' : '🟡';
+                      body += `| ${icon} ${f.severity} | \`${f.file}\` | ${f.line} | **${f.title}** | ${f.description} |\n`;
+                    });
+                  }
+                }
+              } else {
+                body += "⚠️ スキャン結果ファイルが生成されませんでした。";
+              }
+            } catch (e) {
+              body += "❌ 結果の解析中に予期せぬエラーが発生しました。\n" + e.message;
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

@@ -10,40 +10,47 @@ async function run() {
     accessToken: process.env.CAIDO_API_TOKEN
   });
 
-  // メソッド名の不一致を修正（重要！）
-  // SDK内部が .mutation() を探し、ライブラリが .mutate() を持っている場合の橋渡し
-  if (client.graphql && !client.graphql.mutation && client.graphql.mutate) {
-    client.graphql.mutation = client.graphql.mutate;
+  // 1. 【重要】GraphQLのメソッド名の不一致を解消するパッチ
+  // SDK内部が .mutation() を探し、実際には .mutate() しか存在しない問題を解決します
+  if (client.graphql) {
+    if (!client.graphql.mutation && client.graphql.mutate) {
+      console.log("🛠️  Patching client.graphql.mutation with client.graphql.mutate");
+      client.graphql.mutation = client.graphql.mutate;
+    }
   }
 
-  // リサーチいただいた「sdk.from()」を使用して全サービスへアクセス可能にします
-  const caido = sdk.from(client);
+  // 2. 各SDKサービスを個別に初期化
+  // sdk.from に頼らず、確実に存在が確認できているクラスをインスタンス化します
+  const projectSDK = new sdk.ProjectSDK(client);
+  const workflowSDK = new sdk.WorkflowSDK(client);
 
   const targetDir = './design_patterns';
   const workflowPath = './.caido/sast-scanner.json';
 
   try {
-    // 1. プロジェクトの作成/選択
+    // 3. プロジェクトの作成または取得
     const projectName = `SAST-Go-Patterns-${new Date().toISOString().split('T')[0]}`;
     console.log(`📂 Managing project: ${projectName}`);
     
     let project;
     try {
-      project = await caido.projects.create({ name: projectName });
+      project = await projectSDK.create({ name: projectName });
+      console.log(`✅ Project created: ${project.id}`);
     } catch (e) {
-      // 既に存在する場合は一覧から取得
-      const projects = await caido.projects.list();
+      console.log("⚠️  Project might exist, fetching list...");
+      const projects = await projectSDK.list();
       project = projects.find(p => p.name === projectName);
+      if (!project) throw new Error("Could not find or create project.");
+      console.log(`✅ Project found: ${project.id}`);
     }
     
-    await caido.projects.select(project.id);
-    console.log(`✅ Project selected: ${project.id}`);
+    await projectSDK.select(project.id);
 
-    // 2. ワークフローデータの準備
+    // 4. ワークフローデータの準備
     if (!fs.existsSync(workflowPath)) throw new Error(`Workflow not found at ${workflowPath}`);
     const workflowData = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
-    // 3. Goファイルの収集
+    // 5. Goファイルの収集
     const files = fs.readdirSync(targetDir, { recursive: true })
                    .filter(file => file.endsWith('.go'))
                    .map(file => path.join(targetDir, file));
@@ -52,17 +59,15 @@ async function run() {
 
     const allFindings = [];
 
-    // 4. スキャンの実行
+    // 6. スキャンの実行
     for (const filePath of files) {
       const sourceCode = fs.readFileSync(filePath, 'utf8');
       
       try {
-        // caido.workflows または caido.automate を使用
-        const manager = caido.workflows || caido.automate;
-        // メソッド名は runWorkflow または run
-        const runMethod = manager.runWorkflow || manager.run;
+        // SDKのバージョンにより名称が異なる可能性があるため柔軟に対応
+        const runMethod = workflowSDK.runWorkflow || workflowSDK.run || workflowSDK.execute;
         
-        const result = await runMethod.call(manager, workflowData, {
+        const result = await runMethod.call(workflowSDK, workflowData, {
           input: sourceCode,
           fileName: filePath
         });
@@ -75,7 +80,7 @@ async function run() {
       }
     }
 
-    // 5. 結果の保存
+    // 7. 結果の保存
     const finalResult = {
       findings: allFindings,
       scannedAt: new Date().toISOString()
@@ -86,8 +91,8 @@ async function run() {
 
   } catch (error) {
     console.error("❌ SDK Runtime Error:", error.message);
-    console.error(error.stack);
-    fs.writeFileSync('results.json', JSON.stringify({ error: error.message }, null, 2));
+    // エラー情報を書き出して GitHub Actions のコメントで確認できるようにする
+    fs.writeFileSync('results.json', JSON.stringify({ error: error.message, stack: error.stack }, null, 2));
     process.exit(1);
   }
 }

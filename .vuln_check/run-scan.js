@@ -16,6 +16,8 @@ function run() {
             .map(file => path.join(targetDir, file));
 
         console.log(`🔍 Scanning ${files.length} Go files...`);
+        files.forEach(f => console.log(`👉 Checking: ${f}`));
+        
         const allFindings = [];
 
         for (const filePath of files) {

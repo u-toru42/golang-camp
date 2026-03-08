@@ -1,78 +1,74 @@
-/**
- * 堅牢化版セキュリティ検査ルールエンジン
- * 改行やスペースの変動に強く、OWASP Top 10を確実にキャッチします。
- */
-
 module.exports = function scanCode(code, file) {
     const findings = [];
     if (typeof code !== 'string') return findings;
 
-    // 1. SQL Injection (OWASP A03:2021)
-    // 対策: [\\s\\S]* を使うことで、途中に改行があっても検知可能にします
-    const sqlPattern = /fmt\.Sprintf\(["'`](SELECT|INSERT|UPDATE|DELETE|DROP)[\s\S]*?%s/i;
+    // 1. SQL Injection (OWASP A03)
+    // 柔軟性アップ: fmt.Sprintf の後の空白や改行を許容
+    const sqlPattern = /fmt\.Sprintf\s*\(\s*["'`](SELECT|INSERT|UPDATE|DELETE|DROP)[\s\S]*?%s/i;
     if (sqlPattern.test(code)) {
         findings.push({
             title: 'SQL Injection',
             severity: 'CRITICAL',
-            description: 'ユーザー入力がSQLクエリに直接埋め込まれています。database/sqlのプレースホルダを使用してください。',
+            description: 'fmt.Sprintfによる動的SQL構築を検知。',
             file, line: 1
         });
     }
 
-    // 2. OS Command Injection (OWASP A03:2021)
-    const cmdPattern = /exec\.Command\(.*(sh|bash|cmd).*["'`](-c|\/c)["'`]/;
+    // 2. OS Command Injection (OWASP A03)
+    const cmdPattern = /exec\.Command\s*\(\s*.*(sh|bash|cmd).*["'`](-c|\/c)["'`]/;
     if (cmdPattern.test(code)) {
         findings.push({
             title: 'OS Command Injection',
             severity: 'CRITICAL',
-            description: 'シェルを介したコマンド実行が検出されました。引数を個別に渡すか、専用のAPIを使用してください。',
+            description: '外部入力を伴うシェルの呼び出しを検知。',
             file, line: 1
         });
     }
 
-    // 3. XSS (OWASP A03:2021)
-    const xssPattern = /template\.(HTML|JS|URL)\(/;
+    // 3. XSS (OWASP A03)
+    const xssPattern = /template\.(HTML|JS|URL)\s*\(/;
     if (xssPattern.test(code)) {
         findings.push({
             title: 'Cross-Site Scripting (XSS)',
             severity: 'HIGH',
-            description: 'template.HTML等によるエスケープのバイパスを検知しました。',
+            description: 'template.HTML等によるエスケープの無効化。',
             file, line: 1
         });
     }
 
-    // 4. SSRF (OWASP A10:2021)
-    // http.Get等と、動的なURL生成（http://...%s）の両方が存在する場合に警告
-    const hasDynamicUrl = /fmt\.Sprintf\(["'`](https?|ftp):\/\/[\s\S]*?%s/.test(code);
-    const hasHttpClient = /http\.(Get|Post|Do|Head)\(/.test(code);
-    if (hasDynamicUrl && hasHttpClient) {
+    // 4. SSRF (OWASP A10) - より広範囲な検知
+    // fmt.SprintfでURLを作っており、かつhttp.Getなどがある場合
+    const hasSprintfUrl = /fmt\.Sprintf\s*\(\s*["'`](https?|ftp):\/\/[\s\S]*?%s/i.test(code);
+    const hasHttpCall = /http\.(Get|Post|Do|Head)\s*\(/.test(code);
+    if (hasSprintfUrl && hasHttpCall) {
         findings.push({
             title: 'SSRF Risk',
             severity: 'HIGH',
-            description: 'URLが動的に生成されています。SSRF（サーバーサイド・リクエスト・フォージェリ）の危険性があります。',
+            description: '動的に生成されたURLへのHTTPリクエスト。',
             file, line: 1
         });
     }
 
-    // 5. Hardcoded Secret (OWASP A02:2021)
-    // キャメルケース(ApiKey)やスネークケース(api_key)の両方に対応
-    const secretPattern = /(pass(word|wd)|secret|api_?key|token|access_token)\s*[:=]\s*["'`][^"'`]{8,}["'`]/i;
+    // 5. Hardcoded Secret (OWASP A02)
+    // 変数名と値の間のスペースや改行を \s* で許容
+    const secretPattern = /(pass(word|wd)|secret|api_?key|token|access_token)\s*[:=]\s*["'`][^"'`]{8,}/i;
     if (secretPattern.test(code)) {
         findings.push({
             title: 'Hardcoded Secret',
             severity: 'HIGH',
-            description: 'ソースコード内にシークレットが直書きされている可能性があります。',
+            description: '機密情報の直書きを検知。',
             file, line: 1
         });
     }
 
-    // 6. Swallowed Error (Clean Code / OWASP A09:2021)
-    const swallowPattern = /if\s+err\s*!=\s*nil\s*{\s*}/;
+    // 6. Swallowed Error (Clean Code)
+    // 空の中カッコ { } の間にスペースや改行があっても検知
+    const swallowPattern = /if\s+err\s*!=\s*nil\s*\{\s*\}/;
     if (swallowPattern.test(code)) {
         findings.push({
             title: 'Swallowed Error',
             severity: 'MEDIUM',
-            description: 'エラーが検知されましたが、何も処理されていません（空のブロック）。',
+            description: 'エラーの黙殺（空のifブロック）。',
             file, line: 1
         });
     }

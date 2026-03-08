@@ -90,6 +90,13 @@ jobs:
           caido workflow run --workflow .caido/sast-scanner.json --input . --format json > results.json
         continue-on-error: true
 
+      - name: Debug results.json
+        run: |
+          echo "=== results.json の中身を表示します ==="
+          ls -lh results.json || echo "ファイルが存在しません"
+          cat results.json || echo "ファイルを開けません"
+          echo "========================================"
+
       - name: Post Result Comment
         if: matrix.os == 'ubuntu-latest' && always()
         uses: actions/github-script@v7

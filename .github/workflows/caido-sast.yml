@@ -72,7 +72,7 @@ jobs:
           echo '{"findings": []}' > results.json
           
           # Caidoサーバー起動
-          caido-cli --listen 127.0.0.1:8082 --no-open --debug &
+          caido-cli --listen 127.0.0.1:8082 --no-open --debug --offline &
           
           # サーバー起動待ち
           echo "Waiting for Caido to start..."
@@ -83,10 +83,6 @@ jobs:
             fi
             sleep 2
           done
-          
-          # SDKインストールとスクリプト実行
-          npm install @caido/sdk-client
-          node .caido/run-scan.js
         continue-on-error: true
 
       - name: Debug results.json

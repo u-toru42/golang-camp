@@ -53,23 +53,32 @@ jobs:
             tar -xzf caido_archive.tar.gz
           else
             curl -L "$URL" -o caido_archive.zip
-            unzip caido_archive.zip
+            # -o で上書き確認をスキップ
+            unzip -o caido_archive.zip
           fi
           
-          # 2. 実行ファイルを名前のパターンで探し出す（サブフォルダ内も対応）
-          # 圧縮ファイル自身を除外して「caido」で始まる実行ファイルを探す
-          CAIDO_PATH=$(find . -type f -name "caido*" -not -name "*.tar.gz" -not -name "*.zip" | head -n 1)
+          # 2. 実行ファイルを「正確に」探し出す
+          # .yml, .json, .zip, .gz を除外して「caido」が含まれるファイルを探す
+          CAIDO_PATH=$(find . -maxdepth 2 -type f \( -name "caido" -o -name "caido-cli" \) -not -path "*/.*" | head -n 1)
           
+          # もし上記で見つからない場合の予備（caidoで始まり、拡張子がないものを探す）
           if [ -z "$CAIDO_PATH" ]; then
-            echo "Error: Binary not found. Current files:"
+             CAIDO_PATH=$(find . -type f -name "caido*" ! -name "*.yml" ! -name "*.json" ! -name "*.gz" ! -name "*.zip" | head -n 1)
+          fi
+
+          if [ -z "$CAIDO_PATH" ]; then
+            echo "Error: Binary not found."
             ls -R
             exit 1
           fi
           
           # 3. リネームしてパスを通す
-          mv "$CAIDO_PATH" ./caido
-          chmod +x ./caido
-          sudo mv ./caido /usr/local/bin/
+          echo "Found binary at: $CAIDO_PATH"
+          mv "$CAIDO_PATH" ./caido_bin
+          chmod +x ./caido_bin
+          sudo mv ./caido_bin /usr/local/bin/caido
+          
+          # 実行確認
           caido --version
 
       - name: Run Caido Scan

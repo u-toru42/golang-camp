@@ -2,21 +2,16 @@ const sdk = require('@caido/sdk-client');
 const fs = require('fs');
 const path = require('path');
 
-// デバッグ用：使用するクラスを特定
 const CaidoClass = sdk.Client; 
 
-if (!CaidoClass) {
-  console.error("❌ Error: Could not find 'Client' class in SDK. Available exports:", Object.keys(sdk));
-  process.exit(1);
-}
-
 async function run() {
-  console.log("🔗 Connecting to Caido instance at 127.0.0.1:8082...");
+  // 修正ポイント：host/port ではなく url 文字列として渡す
+  // また、プロパティ名が accessToken になっている可能性が高いです
+  console.log("🔗 Connecting to Caido instance at http://127.0.0.1:8082...");
   
   const client = new CaidoClass({
-    host: '127.0.0.1',
-    port: 8082,
-    apiKey: process.env.CAIDO_API_TOKEN
+    url: 'http://127.0.0.1:8082',
+    accessToken: process.env.CAIDO_API_TOKEN
   });
 
   const targetDir = './design_patterns';
@@ -25,12 +20,12 @@ async function run() {
   try {
     // 1. プロジェクトの作成
     const projectName = `SAST-Go-Patterns-${new Date().toISOString().split('T')[0]}`;
-    console.log(`📂 Creating project: ${projectName}`);
+    console.log(`📂 Creating/Selecting project: ${projectName}`);
     
-    // SDKの仕様により、projects.create または projects.add
+    // 最近のSDKでは projects.getOrCreate などが推奨される場合がありますが、
+    // まずは既存のロジックを最新プロパティで修正します
     const project = await client.projects.create({ name: projectName });
     await client.projects.select(project.id);
-    console.log(`✅ Project selected.`);
 
     // 2. ワークフローの読み込み
     if (!fs.existsSync(workflowPath)) {
@@ -39,9 +34,6 @@ async function run() {
     const workflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
     // 3. Goファイルの収集
-    if (!fs.existsSync(targetDir)) {
-        throw new Error(`Target directory ${targetDir} not found.`);
-    }
     const files = fs.readdirSync(targetDir, { recursive: true })
                    .filter(file => file.endsWith('.go'))
                    .map(file => path.join(targetDir, file));
@@ -54,10 +46,10 @@ async function run() {
     for (const filePath of files) {
       const sourceCode = fs.readFileSync(filePath, 'utf8');
       
-      // automate.runWorkflow を使用
-      // 成功しない場合は、SDKのメソッド定義を確認するため console.log(client.automate) などを推奨
       try {
-        const result = await client.automate.runWorkflow(workflow, {
+        // SDK v0.55+ では automate.runWorkflow の引数構造も確認が必要ですが
+        // まずはここまでの接続を確認します
+        const result = await client.automate.runWorkflow(workflow.id || workflow, {
           input: sourceCode,
           fileName: filePath
         });
@@ -66,16 +58,14 @@ async function run() {
           allFindings.push(...result.findings);
         }
       } catch (scanErr) {
-        console.warn(`⚠️  Skip file ${filePath} due to error: ${scanErr.message}`);
+        console.warn(`⚠️  Skip file ${filePath}: ${scanErr.message}`);
       }
     }
 
-    // 5. 結果の保存
     const finalResult = {
       project: projectName,
       findings: allFindings,
-      scannedAt: new Date().toISOString(),
-      status: "success"
+      scannedAt: new Date().toISOString()
     };
 
     fs.writeFileSync('results.json', JSON.stringify(finalResult, null, 2));
@@ -83,8 +73,8 @@ async function run() {
 
   } catch (error) {
     console.error("❌ SDK Runtime Error:", error.message);
-    // 失敗時も空のJSONを出して後続ステップを壊さない
-    fs.writeFileSync('results.json', JSON.stringify({ findings: [], error: error.message }, null, 2));
+    // エラー内容を results.json に書き出して GitHub Comment で確認できるようにする
+    fs.writeFileSync('results.json', JSON.stringify({ error: error.message }, null, 2));
     process.exit(1);
   }
 }

@@ -1,7 +1,7 @@
 name: Caido SAST Security Scan
 
 on:
-  pull_request: # すべてのPRが対象
+  pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     permissions:
-      pull-requests: write # PRへのコメント投稿に必須
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -22,67 +22,11 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Set Binary URL and Format
-        id: set_url
-        run: |
-          JSON_DATA=$(curl -s https://api.caido.io/releases/latest)
-          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "linux" and .arch == "x86_64") | .link')
-            FORMAT="tar.gz"
-          else
-            ARCH=$(uname -m)
-            if [[ "$ARCH" == "arm64" ]]; then
-              URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "macos" and .arch == "aarch64") | .link')
-            else
-              URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "macos" and .arch == "x86_64") | .link')
-            fi
-            FORMAT="zip"
-          fi
-          echo "URL=$URL" >> $GITHUB_OUTPUT
-          echo "FORMAT=$FORMAT" >> $GITHUB_OUTPUT
-        shell: bash
-
-      - name: Install Caido CLI
-        run: |
-          URL="${{ steps.set_url.outputs.URL }}"
-          FORMAT="${{ steps.set_url.outputs.FORMAT }}"
-          
-          rm -rf ./caido_install
-          mkdir -p ./caido_install
-          
-          if [[ "$FORMAT" == "tar.gz" ]]; then
-            curl -L "$URL" -o caido_archive.tar.gz
-            tar -xzf caido_archive.tar.gz -C ./caido_install
-          else
-            curl -L "$URL" -o caido_archive.zip
-            unzip -o caido_archive.zip -d ./caido_install
-          fi
-          
-          BINARY_PATH=$(find ./caido_install -type f \( -name "caido" -o -name "caido-cli" \) | head -n 1)
-          chmod +x "$BINARY_PATH"
-          
-          sudo cp -f "$BINARY_PATH" /usr/local/bin/caido-cli
-          sudo cp -f "$BINARY_PATH" /usr/local/bin/caido
-          caido-cli --version
-
-      - name: Run Caido Instance and Scan
-        env:
-          CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
+      # Caidoサーバーのダウンロード＆起動は不要になりました！一気にスキャンを実行します。
+      - name: Run Caido Rule Engine
         run: |
           echo '{"findings": []}' > results.json
-          
-          # Caidoサーバー起動
-          caido-cli --listen 127.0.0.1:8082 --no-open --debug --offline &
-          
-          # サーバー起動待ち
-          echo "Waiting for Caido to start..."
-          for i in {1..30}; do
-            if curl -s http://127.0.0.1:8082 > /dev/null; then
-              echo "Caido is up!"
-              break
-            fi
-            sleep 2
-          done
+          node .caido/run-scan.js
         continue-on-error: true
 
       - name: Debug results.json
@@ -101,10 +45,12 @@ jobs:
             try {
               if (fs.existsSync('results.json')) {
                 const content = fs.readFileSync('results.json', 'utf8').trim();
-                if (!content.startsWith('{')) {
-                  body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**実行ログ:**\n```\n" + content + "\n```";
+                const data = JSON.parse(content);
+                
+                // 【修正】エラーを正しく検知して表示するように変更
+                if (data.error) {
+                  body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**エラー内容:**\n```\n" + data.error + "\n```";
                 } else {
-                  const data = JSON.parse(content);
                   const findings = data.findings || [];
                   if (findings.length === 0) {
                     body += "✅ 脆弱性は見つかりませんでした。";

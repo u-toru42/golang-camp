@@ -17,21 +17,47 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set Binary URL
+      - name: Set Binary URL and Format
         id: set_url
         run: |
+          # APIから最新のJSONを取得
+          JSON_DATA=$(curl -s https://api.caido.io/releases/latest)
+          
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            echo "URL=https://github.com/caido/caido/releases/latest/download/caido-cli-linux-x86_64.tar.gz" >> $GITHUB_OUTPUT
+            # Linux x86_64 のリンクを抽出
+            URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "linux" and .arch == "x86_64") | .link')
+            FORMAT="tar.gz"
           else
-            echo "URL=https://github.com/caido/caido/releases/latest/download/caido-cli-macos-x86_64.tar.gz" >> $GITHUB_OUTPUT
+            # macOS のアーキテクチャを判定してリンクを抽出
+            ARCH=$(uname -m)
+            if [[ "$ARCH" == "arm64" ]]; then
+              URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "macos" and .arch == "aarch64") | .link')
+            else
+              URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "macos" and .arch == "x86_64") | .link')
+            fi
+            FORMAT="zip"
           fi
+          
+          echo "URL=$URL" >> $GITHUB_OUTPUT
+          echo "FORMAT=$FORMAT" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Install Caido CLI
         run: |
-          curl -L ${{ steps.set_url.outputs.URL }} | tar xz
+          URL="${{ steps.set_url.outputs.URL }}"
+          FORMAT="${{ steps.set_url.outputs.FORMAT }}"
+          
+          if [[ "$FORMAT" == "tar.gz" ]]; then
+            curl -L "$URL" -o caido.tar.gz
+            tar -xzf caido.tar.gz
+          else
+            curl -L "$URL" -o caido.zip
+            unzip caido.zip
+          fi
+          
           chmod +x caido
           sudo mv caido /usr/local/bin/
+          caido --version
 
       - name: Run Caido Scan
         id: run_scan
@@ -40,7 +66,7 @@ jobs:
         run: |
           # --workflow にリポジトリ内のJSONを指定
           caido workflow run --workflow .caido/sast-scanner.json --input . --format json > results.json
-        continue-on-error: true # ここをrunと同じ列に揃えました
+        continue-on-error: true
 
       - name: Post Result Comment
         if: matrix.os == 'ubuntu-latest' && always()
@@ -52,7 +78,6 @@ jobs:
             try {
               if (fs.existsSync('results.json')) {
                 const data = JSON.parse(fs.readFileSync('results.json', 'utf8'));
-                // findingsの中身を確認して抽出
                 const findings = data.findings || [];
                 if (findings.length === 0) {
                   body += "✅ 脆弱性は見つかりませんでした。";
@@ -71,7 +96,6 @@ jobs:
               console.log(e);
             }
             
-            // コメントの投稿を実行
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

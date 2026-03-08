@@ -2,40 +2,46 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * 🛡️ Security Rules (Integrated Version)
- * 正規表現を極限まで柔軟にし、go fmt 後のコードを確実に捉えます。
+ * 🛡️ Security Rules (Super-Greedy Version)
+ * go fmt による改行や空白の影響を完全に無効化し、キーワードの組み合わせで検知します。
  */
 function scanCode(code, file) {
     const findings = [];
     const add = (title, severity, desc) => findings.push({ title, severity, description: desc, file, line: 1 });
 
-    // 1. SQL Injection (OWASP A03)
-    // Sprintf と SQLコマンドが近くにあれば検知
-    if (/Sprintf[\s\S]{0,50}["'`](SELECT|INSERT|UPDATE|DELETE|DROP)[\s\S]+?%s/i.test(code)) {
+    // 1. SQL Injection
+    // Sprintf と SQLキーワード、そして %s が含まれているか（距離制限なし）
+    if (/fmt\.Sprintf[\s\S]*?(SELECT|INSERT|UPDATE|DELETE|DROP)[\s\S]*?%s/i.test(code)) {
         add('SQL Injection', 'CRITICAL', 'fmt.Sprintfによる動的SQL構築を検知。');
     }
 
-    // 2. OS Command Injection (OWASP A03)
-    if (/exec\.Command[\s\S]{0,50}(sh|bash|cmd)[\s\S]+?(-c|\/c)/i.test(code)) {
+    // 2. OS Command Injection
+    // exec.Command と sh/bash/cmd、-c が含まれているか
+    if (/exec\.Command[\s\S]*?(sh|bash|cmd)[\s\S]*?(-c|\/c)/i.test(code)) {
         add('OS Command Injection', 'CRITICAL', 'シェルを介したコマンド実行を検知。');
     }
 
-    // 3. XSS (OWASP A03)
+    // 3. XSS
     if (/template\.(HTML|JS|URL)/.test(code)) {
         add('Cross-Site Scripting (XSS)', 'HIGH', 'HTMLエスケープのバイパスを検知。');
     }
 
-    // 4. SSRF (OWASP A10)
-    if (/Sprintf[\s\S]{0,50}https?:\/\/[\s\S]+?%s/i.test(code) && /http\.(Get|Post|Do|NewRequest)/.test(code)) {
+    // 4. SSRF
+    // SprintfでURLを作っており、かつ httpパッケージの呼び出しがあるか
+    const hasDynamicUrl = /fmt\.Sprintf[\s\S]*?https?:\/\/[\s\S]*?%s/i.test(code);
+    const hasHttpCall = /http\.(Get|Post|Do|NewRequest)/.test(code);
+    if (hasDynamicUrl && hasHttpCall) {
         add('SSRF Risk', 'HIGH', '動的に生成されたURLへのHTTPリクエストを検知。');
     }
 
-    // 5. Hardcoded Secret (OWASP A02)
-    if (/(api_?key|password|secret|token)[\s\S]{0,20}[:=][\s\S]{0,20}["'`]([a-zA-Z0-9_\-]{16,})/i.test(code)) {
+    // 5. Hardcoded Secret
+    // api_key等のキーワードの後に引用符で囲まれた16文字以上の文字列があるか
+    if (/(api_?key|password|secret|token)[\s\S]*?[:=][\s\S]*?["'`]([a-zA-Z0-9_\-]{16,})["'`]/i.test(code)) {
         add('Hardcoded Secret', 'HIGH', '機密情報の直書きを検知。');
     }
 
     // 6. Swallowed Error (Clean Code)
+    // if err != nil { } の間に何（改行・スペース）があっても検知
     if (/if\s+err\s*!=\s*nil\s*\{[\s\n\r]*\}/.test(code)) {
         add('Swallowed Error', 'MEDIUM', 'エラーの黙殺（空のifブロック）を検知。');
     }
@@ -47,7 +53,7 @@ function scanCode(code, file) {
  * 🚀 Main Engine
  */
 function run() {
-    console.log("🚀 Custom SAST Engine: Version 3.0 (Integrated)");
+    console.log("🚀 Custom SAST Engine: Version 4.0 (Super-Greedy)");
     const targetDir = './design_patterns';
     
     if (!fs.existsSync(targetDir)) {
@@ -73,7 +79,6 @@ function run() {
         const relativePath = path.relative(process.cwd(), filePath);
         const sourceCode = fs.readFileSync(filePath, 'utf8');
         
-        // ログ出力を明確に変更（これがログに出れば最新版です）
         console.log(`👉 [SCANNING] ${relativePath} ...`);
         
         const results = scanCode(sourceCode, relativePath);

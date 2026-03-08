@@ -2,51 +2,45 @@ package security_test
 
 import (
 	"database/sql"
-	"fmt"
 	"html/template"
+	"log" // ログ出力用
 	"net/http"
-	"os/exec"
+	"os" // 環境変数用
 )
 
-// 脆弱性テスト用構造体
-type VulnerableService struct {
+type SecureService struct {
 	ApiKey string
 }
 
-func NewVulnerableService() *VulnerableService {
-	// 🔴 5. Hardcoded Secret (OWASP A02:2021)
-	// シークレットを直接コードに書くのは、Clean Codeでも「散らかった設計」の代表格です
-	return &VulnerableService{
-		ApiKey: "sk_live_51MzByuL9fX7vR2j8NqW2pL",
+func NewSecureService() *SecureService {
+	// ✅ 対策5: 環境変数から読み込む (OWASP A02)
+	// コードには「どこから持ってくるか」という意図だけを残す
+	return &SecureService{
+		ApiKey: os.Getenv("APP_API_KEY"),
 	}
 }
 
-func (s *VulnerableService) ProcessData(db *sql.DB, userInput string) {
-	// 🔴 1. SQL Injection (OWASP A03:2021)
-	// Martin Fowlerの「意図を明確にする」原則に反し、文字列操作でロジックを組み立ててしまっています
-	query := fmt.Sprintf("SELECT * FROM products WHERE category = '%s'", userInput)
-	rows, err := db.Query(query)
+func (s *SecureService) ProcessData(db *sql.DB, userInput string) {
+	// ✅ 対策1: プリペアドステートメント (OWASP A03)
+	// 文字列連結をやめ、DB側にパラメータとして渡す
+	const query = "SELECT * FROM products WHERE category = ?"
+	rows, err := db.Query(query, userInput)
 
-	// 🔴 6. Swallowed Error (Clean Code / OWASP A09:2021)
-	// Kent Beckが最も嫌う「沈黙するエラー」。何か起きても誰も気づけません
+	// ✅ 対策6: 適切にログを吐く (Clean Code)
+	// 「何か起きた」ことを記録し、沈黙させない
 	if err != nil {
+		log.Printf("Error querying database: %v", err)
+		return
 	}
 	defer rows.Close()
 
-	// 🔴 2. OS Command Injection (OWASP A03:2021)
-	// 外部入力をシェルに直接渡す、極めて危険な実装です
-	cmd := exec.Command("sh", "-c", "ls "+userInput)
-	_ = cmd.Run()
-
-	// 🔴 4. SSRF - Server-Side Request Forgery (OWASP A10:2021)
-	// サーバーが攻撃者の指定した内部ネットワーク等にアクセスさせられるリスクがあります
-	targetURL := fmt.Sprintf("https://internal.api.com/v1/user/%s", userInput)
-	_, _ = http.Get(targetURL)
+	// ✅ 対策2 & 4: 外部ライブラリやバリデーション済みの入力を使う
+	// (ここでは簡略化のため、直接実行を避ける設計への変更を推奨)
 }
 
-func (s *VulnerableService) RenderResponse(w http.ResponseWriter, userInput string) {
-	// 🔴 3. Cross-Site Scripting (XSS) (OWASP A03:2021)
-	// html/templateの安全なエスケープ機能を自ら破壊（Bypass）しています
-	safeHTML := template.HTML("<div>" + userInput + "</div>")
-	fmt.Fprintf(w, "Result: %v", safeHTML)
+func (s *SecureService) RenderResponse(w http.ResponseWriter, userInput string) {
+	// ✅ 対策3: デフォルトのエスケープに任せる (OWASP A03)
+	// template.HTMLを使わず、ただの文字列としてテンプレートに渡す
+	tmpl := template.Must(template.New("web").Parse("Result: {{.}}"))
+	_ = tmpl.Execute(w, userInput)
 }

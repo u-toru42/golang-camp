@@ -47,47 +47,42 @@ jobs:
           URL="${{ steps.set_url.outputs.URL }}"
           FORMAT="${{ steps.set_url.outputs.FORMAT }}"
           
-          # 1. ダウンロードと解凍
+          # 1. 完全にクリーンな一時ディレクトリで解凍する
+          mkdir -p ./caido_install
           if [[ "$FORMAT" == "tar.gz" ]]; then
             curl -L "$URL" -o caido_archive.tar.gz
-            tar -xzf caido_archive.tar.gz
+            tar -xzf caido_archive.tar.gz -C ./caido_install
           else
             curl -L "$URL" -o caido_archive.zip
-            # -o で上書き確認をスキップ
-            unzip -o caido_archive.zip
+            unzip -o caido_archive.zip -d ./caido_install
           fi
           
-          # 2. 実行ファイルを「正確に」探し出す
-          # .yml, .json, .zip, .gz を除外して「caido」が含まれるファイルを探す
-          CAIDO_PATH=$(find . -maxdepth 2 -type f \( -name "caido" -o -name "caido-cli" \) -not -path "*/.*" | head -n 1)
+          # 2. ワークフローファイルとの混同を避けるため、絶対パスでバイナリを特定
+          # 解凍されたディレクトリ内にある実行ファイル（caido-cli または caido）を取得
+          BINARY_PATH=$(find ./caido_install -type f -executable | head -n 1)
           
-          # もし上記で見つからない場合の予備（caidoで始まり、拡張子がないものを探す）
-          if [ -z "$CAIDO_PATH" ]; then
-             CAIDO_PATH=$(find . -type f -name "caido*" ! -name "*.yml" ! -name "*.json" ! -name "*.gz" ! -name "*.zip" | head -n 1)
-          fi
-
-          if [ -z "$CAIDO_PATH" ]; then
-            echo "Error: Binary not found."
-            ls -R
+          if [ -z "$BINARY_PATH" ]; then
+            echo "Error: Binary not found in ./caido_install"
+            ls -R ./caido_install
             exit 1
           fi
           
-          # 3. リネームしてパスを通す
-          echo "Found binary at: $CAIDO_PATH"
-          mv "$CAIDO_PATH" ./caido_bin
-          chmod +x ./caido_bin
-          sudo mv ./caido_bin /usr/local/bin/caido
+          echo "Found binary at: $BINARY_PATH"
+          chmod +x "$BINARY_PATH"
+          sudo mv "$BINARY_PATH" /usr/local/bin/caido
           
-          # 実行確認
-          caido --version
+          # 3. 確実に本物であることを確認
+          /usr/local/bin/caido --version
 
       - name: Run Caido Scan
         id: run_scan
         env:
           CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
         run: |
-          # --workflow にリポジトリ内のJSONを指定
-          caido workflow run --workflow .caido/sast-scanner.json --input . --format json > results.json
+          # コマンドを最新の推奨形式（positional argument）に修正
+          # results.json を空ファイルで初期化しておく
+          touch results.json
+          caido workflow run .caido/sast-scanner.json --input . --format json > results.json
         continue-on-error: true
 
       - name: Debug results.json

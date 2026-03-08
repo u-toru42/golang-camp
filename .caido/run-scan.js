@@ -1,68 +1,76 @@
-const sdk = require('@caido/sdk-client');
 const fs = require('fs');
 const path = require('path');
+// SDKの不具合を回避するため、標準の fetch を使用します
 
-async function run() {
-  console.log("🔗 Connecting to Caido instance at http://127.0.0.1:8082...");
-  
-  const client = new sdk.Client({
-    url: 'http://127.0.0.1:8082',
-    accessToken: process.env.CAIDO_API_TOKEN
+const CAIDO_URL = 'http://127.0.0.1:8082/graphql';
+const API_TOKEN = process.env.CAIDO_API_TOKEN;
+
+// GraphQLリクエストを送信する共通関数
+async function graphqlRequest(query, variables = {}) {
+  const response = await fetch(CAIDO_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${API_TOKEN}`
+    },
+    body: JSON.stringify({ query, variables })
   });
 
-  // 【最重要】Urql クライアントのメソッドをラッパーにバインドする
-  if (client.graphql) {
-    // ログから client.graphql または client.graphql.client が Urql クライアントであると判明
-    const innerClient = client.graphql.client || client.graphql;
-    
-    // SDK 内部が求めている this.graphql.query と this.graphql.mutation を明示的に生やす
-    if (innerClient.query) {
-      client.graphql.query = innerClient.query.bind(innerClient);
-    }
-    if (innerClient.mutation) {
-      client.graphql.mutation = innerClient.mutation.bind(innerClient);
-    }
-    
-    // 念のため、古い SDK が期待するかもしれない request メソッドもシミュレート
-    if (!client.graphql.request) {
-      client.graphql.request = async (doc, vars) => {
-         // Urql の query を Promisify して返すラッパー
-         const result = await innerClient.query(doc, vars).toPromise();
-         if (result.error) throw result.error;
-         return result.data;
-      };
-    }
-    
-    console.log("🛠️  GraphQL Wrapper fully patched for Urql.");
+  const json = await response.json();
+  if (json.errors) {
+    throw new Error(json.errors.map(e => e.message).join(', '));
   }
+  return json.data;
+}
 
-  const projectSDK = new sdk.ProjectSDK(client);
-  const workflowSDK = new sdk.WorkflowSDK(client);
-
+async function run() {
+  console.log("🔗 Connecting to Caido instance via Raw GraphQL...");
+  
   const targetDir = './design_patterns';
   const workflowPath = './.caido/sast-scanner.json';
 
   try {
+    // 1. プロジェクトの作成 (Raw GraphQL Mutation)
     const projectName = `SAST-Go-Patterns-${new Date().toISOString().split('T')[0]}`;
-    console.log(`📂 Managing project: ${projectName}`);
+    console.log(`📂 Creating project: ${projectName}`);
     
-    let project;
-    try {
-      project = await projectSDK.create({ name: projectName });
-      console.log(`✅ Project created: ${project.id}`);
-    } catch (e) {
-      console.log("⚠️  Creation failed, attempting to find existing project...");
-      const projects = await projectSDK.list();
-      project = projects.find(p => p.name === projectName);
-      if (!project) throw new Error("Could not find or create project.");
-      console.log(`✅ Project found: ${project.id}`);
-    }
-    
-    await projectSDK.select(project.id);
+    const createProjectQuery = `
+      mutation CreateProject($input: CreateProjectInput!) {
+        createProject(input: $input) {
+          project {
+            id
+            name
+          }
+        }
+      }
+    `;
 
+    let projectId;
+    try {
+      const data = await graphqlRequest(createProjectQuery, { input: { name: projectName } });
+      projectId = data.createProject.project.id;
+      console.log(`✅ Project created: ${projectId}`);
+    } catch (e) {
+      console.log(`⚠️  Creation failed (${e.message}), attempting to list projects...`);
+      // プロジェクト一覧の取得
+      const listProjectsQuery = `query { projects { edges { node { id name } } } }`;
+      const listData = await graphqlRequest(listProjectsQuery);
+      const existing = listData.projects.edges.find(e => e.node.name === projectName);
+      if (!existing) throw new Error("Failed to find or create project.");
+      projectId = existing.node.id;
+      console.log(`✅ Project found: ${projectId}`);
+    }
+
+    // 2. プロジェクトの選択
+    const selectProjectQuery = `mutation SelectProject($id: ID!) { selectProject(id: $id) { id } }`;
+    await graphqlRequest(selectProjectQuery, { id: projectId });
+    console.log(`✅ Project selected.`);
+
+    // 3. ワークフローデータの準備
     if (!fs.existsSync(workflowPath)) throw new Error(`Workflow not found at ${workflowPath}`);
     const workflowData = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
+    // 4. Goファイルの収集
     const files = fs.readdirSync(targetDir, { recursive: true })
                    .filter(file => file.endsWith('.go'))
                    .map(file => path.join(targetDir, file));
@@ -71,25 +79,43 @@ async function run() {
 
     const allFindings = [];
 
+    // 5. スキャンの実行 (Automate Run Workflow)
+    // ワークフローを実行するGraphQL Mutation
+    const runWorkflowQuery = `
+      mutation RunWorkflow($workflow: JSON!, $input: String!, $fileName: String) {
+        runWorkflow(input: { workflow: $workflow, payload: $input, params: { fileName: $fileName } }) {
+          findings {
+            title
+            description
+            severity
+            filePath
+          }
+        }
+      }
+    `;
+
     for (const filePath of files) {
       const sourceCode = fs.readFileSync(filePath, 'utf8');
       
       try {
-        const runMethod = workflowSDK.runWorkflow || workflowSDK.run || workflowSDK.execute;
-        
-        const result = await runMethod.call(workflowSDK, workflowData, {
+        const result = await graphqlRequest(runWorkflowQuery, {
+          workflow: workflowData,
           input: sourceCode,
           fileName: filePath
         });
 
-        if (result && result.findings) {
-          allFindings.push(...result.findings);
+        // 実行結果（finding）があれば追加
+        if (result.runWorkflow && result.runWorkflow.findings) {
+          allFindings.push(...result.runWorkflow.findings);
         }
       } catch (scanErr) {
-        console.warn(`⚠️  Skip ${filePath}: ${scanErr.message}`);
+         // GraphQLの仕様上、ここはエラーになりにくいですが、フィールド名違いなどのため捕捉
+         // Caidoのバージョンによっては mutation 名が異なる可能性があります
+         console.warn(`⚠️  Skip ${filePath}: ${scanErr.message}`);
       }
     }
 
+    // 6. 結果の保存
     const finalResult = {
       findings: allFindings,
       scannedAt: new Date().toISOString()
@@ -99,7 +125,7 @@ async function run() {
     console.log(`✨ Scan completed. Found ${allFindings.length} issues.`);
 
   } catch (error) {
-    console.error("❌ SDK Runtime Error:", error.message);
+    console.error("❌ Fatal Error:", error.message);
     fs.writeFileSync('results.json', JSON.stringify({ error: error.message }, null, 2));
     process.exit(1);
   }

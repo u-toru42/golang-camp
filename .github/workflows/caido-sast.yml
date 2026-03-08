@@ -24,11 +24,9 @@ jobs:
           JSON_DATA=$(curl -s https://api.caido.io/releases/latest)
           
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            # Linux x86_64 のリンクを抽出
             URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "linux" and .arch == "x86_64") | .link')
             FORMAT="tar.gz"
           else
-            # macOS のアーキテクチャを判定してリンクを抽出
             ARCH=$(uname -m)
             if [[ "$ARCH" == "arm64" ]]; then
               URL=$(echo "$JSON_DATA" | jq -r '.links[] | select(.kind == "cli" and .os == "macos" and .arch == "aarch64") | .link')
@@ -47,7 +45,6 @@ jobs:
           URL="${{ steps.set_url.outputs.URL }}"
           FORMAT="${{ steps.set_url.outputs.FORMAT }}"
           
-          # 1. クリーンなディレクトリを作成して解凍
           rm -rf ./caido_install
           mkdir -p ./caido_install
           
@@ -59,8 +56,6 @@ jobs:
             unzip -o caido_archive.zip -d ./caido_install
           fi
           
-          # 2. バイナリを特定（Mac/Linux両対応の検索方法）
-          # 名前が 'caido' または 'caido-cli' である「ファイル」を探す
           BINARY_PATH=$(find ./caido_install -type f \( -name "caido" -o -name "caido-cli" \) | head -n 1)
           
           if [ -z "$BINARY_PATH" ]; then
@@ -69,12 +64,8 @@ jobs:
             exit 1
           fi
           
-          echo "Installing binary from: $BINARY_PATH"
           chmod +x "$BINARY_PATH"
-          # 既存の偽物（YAML等）を確実に上書きするため sudo cp を使用
           sudo cp -f "$BINARY_PATH" /usr/local/bin/caido
-          
-          # 3. 実行確認
           caido --version
 
       - name: Run Caido Scan
@@ -82,13 +73,9 @@ jobs:
         env:
           CAIDO_API_TOKEN: ${{ secrets.CAIDO_API_TOKEN }}
         run: |
-          # results.json を初期化
           echo '{"findings": []}' > results.json
-          
-          # 最新の公式ドキュメントに準じた引数順序で実行
-          # --workflow フラグが必要なバージョンと不要なバージョンがあるため、
-          # 最も安定した「パス指定」で実行します
-          caido workflow run .caido/sast-scanner.json --input . --format json > results.json
+          # 実行ログを results.json に統合して、何が起きたか把握できるようにします
+          caido run .caido/sast-scanner.json --input . --format json > results.json 2>&1 || true
         continue-on-error: true
 
       - name: Debug results.json
@@ -107,23 +94,29 @@ jobs:
             let body = "### 🛡️ Caido Security Scan Result\n\n";
             try {
               if (fs.existsSync('results.json')) {
-                const data = JSON.parse(fs.readFileSync('results.json', 'utf8'));
-                const findings = data.findings || [];
-                if (findings.length === 0) {
-                  body += "✅ 脆弱性は見つかりませんでした。";
+                const content = fs.readFileSync('results.json', 'utf8').trim();
+                
+                // JSONでない（エラーメッセージなどの）場合の処理
+                if (!content.startsWith('{')) {
+                   body += "⚠️ スキャン実行中にエラーが発生しました。\n\n**実行ログ:**\n```\n" + content + "\n```";
                 } else {
-                  body += "| Severity | File | Line | Message |\n| :--- | :--- | :--- | :--- |\n";
-                  findings.forEach(f => {
-                    const icon = f.severity === 'CRITICAL' ? '🔴' : '🟡';
-                    body += `| ${icon} ${f.severity} | \`${f.file}\` | ${f.line} | ${f.message} |\n`;
-                  });
+                  const data = JSON.parse(content);
+                  const findings = data.findings || [];
+                  if (findings.length === 0) {
+                    body += "✅ 脆弱性は見つかりませんでした。";
+                  } else {
+                    body += "| Severity | File | Line | Message |\n| :--- | :--- | :--- | :--- |\n";
+                    findings.forEach(f => {
+                      const icon = f.severity === 'CRITICAL' ? '🔴' : '🟡';
+                      body += `| ${icon} ${f.severity} | \`${f.file}\` | ${f.line} | ${f.message} |\n`;
+                    });
+                  }
                 }
               } else {
-                body += "⚠️ スキャン結果ファイル(results.json)が生成されませんでした。";
+                body += "⚠️ スキャン結果ファイルが生成されませんでした。";
               }
             } catch (e) {
-              body += "❌ スキャン結果の解析中にエラーが発生しました。";
-              console.log(e);
+              body += "❌ 結果の解析中に予期せぬエラーが発生しました。\n" + e.message;
             }
             
             await github.rest.issues.createComment({

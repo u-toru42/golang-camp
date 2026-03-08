@@ -10,26 +10,30 @@ async function run() {
     accessToken: process.env.CAIDO_API_TOKEN
   });
 
-  // 【最重要】GraphQL 内部クライアントの配線修正
+  // 【最重要】Urql クライアントのメソッドをラッパーにバインドする
   if (client.graphql) {
-    const internalClient = client.graphql.client;
-    if (internalClient) {
-      console.log("🔍 Internal GraphQL client found. Methods:", Object.keys(internalClient));
-      
-      // 通信メソッドを特定（request または query または execute）
-      const execMethod = internalClient.request || internalClient.query || internalClient.execute;
-      
-      if (execMethod) {
-        // ProjectSDKが期待する場所に、実体をバインドして配置
-        client.graphql.query = execMethod.bind(internalClient);
-        client.graphql.mutation = execMethod.bind(internalClient);
-        console.log("🛠️  GraphQL bypass established using internal client.");
-      }
-    } else {
-      // client プロパティがない場合の最終手段（直接 client.graphql をパッチ）
-      client.graphql.query = client.graphql.query || client.graphql.request;
-      client.graphql.mutation = client.graphql.mutation || client.graphql.request;
+    // ログから client.graphql または client.graphql.client が Urql クライアントであると判明
+    const innerClient = client.graphql.client || client.graphql;
+    
+    // SDK 内部が求めている this.graphql.query と this.graphql.mutation を明示的に生やす
+    if (innerClient.query) {
+      client.graphql.query = innerClient.query.bind(innerClient);
     }
+    if (innerClient.mutation) {
+      client.graphql.mutation = innerClient.mutation.bind(innerClient);
+    }
+    
+    // 念のため、古い SDK が期待するかもしれない request メソッドもシミュレート
+    if (!client.graphql.request) {
+      client.graphql.request = async (doc, vars) => {
+         // Urql の query を Promisify して返すラッパー
+         const result = await innerClient.query(doc, vars).toPromise();
+         if (result.error) throw result.error;
+         return result.data;
+      };
+    }
+    
+    console.log("🛠️  GraphQL Wrapper fully patched for Urql.");
   }
 
   const projectSDK = new sdk.ProjectSDK(client);
@@ -50,12 +54,13 @@ async function run() {
       console.log("⚠️  Creation failed, attempting to find existing project...");
       const projects = await projectSDK.list();
       project = projects.find(p => p.name === projectName);
-      if (!project) throw new Error("Could not find or create project: " + e.message);
+      if (!project) throw new Error("Could not find or create project.");
       console.log(`✅ Project found: ${project.id}`);
     }
     
     await projectSDK.select(project.id);
 
+    if (!fs.existsSync(workflowPath)) throw new Error(`Workflow not found at ${workflowPath}`);
     const workflowData = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
     const files = fs.readdirSync(targetDir, { recursive: true })
@@ -68,21 +73,30 @@ async function run() {
 
     for (const filePath of files) {
       const sourceCode = fs.readFileSync(filePath, 'utf8');
+      
       try {
         const runMethod = workflowSDK.runWorkflow || workflowSDK.run || workflowSDK.execute;
+        
         const result = await runMethod.call(workflowSDK, workflowData, {
           input: sourceCode,
           fileName: filePath
         });
-        if (result && result.findings) allFindings.push(...result.findings);
+
+        if (result && result.findings) {
+          allFindings.push(...result.findings);
+        }
       } catch (scanErr) {
-        console.warn(`⚠️ Skip ${filePath}: ${scanErr.message}`);
+        console.warn(`⚠️  Skip ${filePath}: ${scanErr.message}`);
       }
     }
 
-    const finalResult = { findings: allFindings, scannedAt: new Date().toISOString() };
+    const finalResult = {
+      findings: allFindings,
+      scannedAt: new Date().toISOString()
+    };
+
     fs.writeFileSync('results.json', JSON.stringify(finalResult, null, 2));
-    console.log(`✨ Done! Found ${allFindings.length} findings.`);
+    console.log(`✨ Scan completed. Found ${allFindings.length} issues.`);
 
   } catch (error) {
     console.error("❌ SDK Runtime Error:", error.message);

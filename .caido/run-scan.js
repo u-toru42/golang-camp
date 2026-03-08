@@ -1,9 +1,21 @@
-const { CaidoClient } = require('@caido/sdk-client');
+// クラス名を CaidoClient から Caido に変更
+const sdk = require('@caido/sdk-client');
 const fs = require('fs');
 const path = require('path');
 
+// デバッグ用：SDKの中身に何が入っているか確認
+console.log("SDK Exports:", Object.keys(sdk));
+
+// Caidoクラスを取得（環境によって名前が違う場合の対策）
+const CaidoClass = sdk.Caido || sdk.CaidoClient;
+
+if (!CaidoClass) {
+  console.error("❌ Error: Could not find Caido class in SDK. Available exports:", Object.keys(sdk));
+  process.exit(1);
+}
+
 async function run() {
-  const client = new CaidoClient({
+  const client = new CaidoClass({
     host: '127.0.0.1',
     port: 8082,
     apiKey: process.env.CAIDO_API_TOKEN
@@ -15,16 +27,19 @@ async function run() {
   try {
     console.log(`🚀 Scanning directory: ${targetDir}`);
     
-    // 1. プロジェクトの作成（一意の名前を付与）
+    // プロジェクトの作成
     const projectName = `SAST-Go-Patterns-${new Date().toISOString().split('T')[0]}`;
     const project = await client.projects.create({ name: projectName });
     await client.projects.select(project.id);
     console.log(`✅ Project created: ${projectName}`);
 
-    // 2. ワークフロー（JSON）の読み込み
+    // ワークフローの読み込み
+    if (!fs.existsSync(workflowPath)) {
+        throw new Error(`Workflow file not found at ${workflowPath}`);
+    }
     const workflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
-    // 3. Goファイルの収集 (再帰的)
+    // Goファイルの収集
     const files = fs.readdirSync(targetDir, { recursive: true })
                    .filter(file => file.endsWith('.go'))
                    .map(file => path.join(targetDir, file));
@@ -33,12 +48,10 @@ async function run() {
 
     const allFindings = [];
 
-    // 4. 各ファイルをワークフローに投入
     for (const filePath of files) {
       const sourceCode = fs.readFileSync(filePath, 'utf8');
       
-      // ワークフローを実行
-      // ※SDKのメソッド名は実際のバージョンにより `automate.run` 等に読み替えてください
+      // 実行。SDKのバージョンにより automate.runWorkflow または automate.run
       const result = await client.automate.runWorkflow(workflow, {
         input: sourceCode,
         fileName: filePath
@@ -49,7 +62,6 @@ async function run() {
       }
     }
 
-    // 5. 結果の保存
     const finalResult = {
       project: projectName,
       findings: allFindings,
@@ -61,6 +73,8 @@ async function run() {
 
   } catch (error) {
     console.error("❌ SDK Error:", error.message);
+    // 詳細なスタックトレースを表示
+    console.error(error);
     process.exit(1);
   }
 }

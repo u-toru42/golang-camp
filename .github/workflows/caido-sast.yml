@@ -47,16 +47,29 @@ jobs:
           URL="${{ steps.set_url.outputs.URL }}"
           FORMAT="${{ steps.set_url.outputs.FORMAT }}"
           
+          # 1. ダウンロードと解凍
           if [[ "$FORMAT" == "tar.gz" ]]; then
-            curl -L "$URL" -o caido.tar.gz
-            tar -xzf caido.tar.gz
+            curl -L "$URL" -o caido_archive.tar.gz
+            tar -xzf caido_archive.tar.gz
           else
-            curl -L "$URL" -o caido.zip
-            unzip caido.zip
+            curl -L "$URL" -o caido_archive.zip
+            unzip caido_archive.zip
           fi
           
-          chmod +x caido
-          sudo mv caido /usr/local/bin/
+          # 2. 実行ファイルを名前のパターンで探し出す（サブフォルダ内も対応）
+          # 圧縮ファイル自身を除外して「caido」で始まる実行ファイルを探す
+          CAIDO_PATH=$(find . -type f -name "caido*" -not -name "*.tar.gz" -not -name "*.zip" | head -n 1)
+          
+          if [ -z "$CAIDO_PATH" ]; then
+            echo "Error: Binary not found. Current files:"
+            ls -R
+            exit 1
+          fi
+          
+          # 3. リネームしてパスを通す
+          mv "$CAIDO_PATH" ./caido
+          chmod +x ./caido
+          sudo mv ./caido /usr/local/bin/
           caido --version
 
       - name: Run Caido Scan
